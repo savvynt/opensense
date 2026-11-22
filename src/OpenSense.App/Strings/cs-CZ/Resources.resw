@@ -2040,4 +2040,7 @@ Podrobnosti: {1}</value>
     <value>Zkusit znovu</value>
     <comment>Button to retry opening the page after a navigation failure.</comment>
   </data>
+  <data name="Tray_Widget" xml:space="preserve">
+    <value>Widget</value>
+  </data>
 </root>

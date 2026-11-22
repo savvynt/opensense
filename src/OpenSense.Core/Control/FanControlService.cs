@@ -58,6 +58,7 @@ public sealed class FanControlService : IDeviceDispatcher, IDisposable
     // Last sensor sample.
     private DateTime _lastSample = DateTime.MinValue;
     private double? _cpuTemp, _gpuTemp, _systemTemp, _cpuLoad, _gpuLoad;
+    private double? _cpuWatts, _gpuWatts, _gpuWattLimit;
     private bool _gpuAsleep;
     private bool? _gpuOn;
     private TemperatureOrigin _cpuOrigin, _gpuOrigin;
@@ -396,6 +397,9 @@ public sealed class FanControlService : IDeviceDispatcher, IDisposable
             GpuTemperature = _gpuTemp,
             GpuTemperatureOrigin = _gpuOrigin,
             GpuAsleep = _gpuAsleep,
+            CpuPower = _cpuWatts,
+            GpuPower = _gpuWatts,
+            GpuPowerLimit = _gpuWattLimit,
             Limits = _limits,
             SystemTemperature = _systemTemp,
             CpuLoad = _cpuLoad,
@@ -427,6 +431,7 @@ public sealed class FanControlService : IDeviceDispatcher, IDisposable
         var cpu = _direct.ReadCpu();
         _cpuOrigin = cpu is null ? TemperatureOrigin.Firmware : TemperatureOrigin.Processor;
         _cpuTemp = cpu ?? SensorReadings.Temperature(Capabilities.Has(SensorId.CpuTemperature) ? ReadFirmwareSensor(SensorId.CpuTemperature) : null);
+        _cpuWatts = _direct.ReadCpuWatts();
 
         var firmwareGpu = Capabilities.Has(SensorId.GpuTemperature);
         if (firmwareGpu || _direct.Gpu is not null)
@@ -439,6 +444,9 @@ public sealed class FanControlService : IDeviceDispatcher, IDisposable
             _gpuOn = on;
             // Asking the driver while the GPU is off could wake it.
             var gpu = on == true ? _direct.ReadGpu() : null;
+            var draw = on == true ? _direct.ReadGpuWatts() : default;
+            _gpuWatts = draw.Watts;
+            _gpuWattLimit = draw.Limit;
             _gpuOrigin = gpu is null ? TemperatureOrigin.Firmware : TemperatureOrigin.GpuDriver;
             _gpuTemp = gpu ?? (g > 0 ? g : null);
             _gpuAsleep = on == false && _gpuTemp is null;

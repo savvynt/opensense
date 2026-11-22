@@ -2040,4 +2040,7 @@ Détails : {1}</value>
     <value>Réessayer</value>
     <comment>Button to retry opening the page after a navigation failure.</comment>
   </data>
+  <data name="Tray_Widget" xml:space="preserve">
+    <value>Widget</value>
+  </data>
 </root>

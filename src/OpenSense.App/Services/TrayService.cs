@@ -14,7 +14,7 @@ using OpenSense.Core.Hardware;
 namespace OpenSense.App.Services;
 
 /// <summary>Notification-area icon: the OpenSense icon, a tooltip with the temperatures, and quick controls.</summary>
-public sealed class TrayService(MonitorViewModel monitor, FanControlViewModel fans) : IDisposable
+public sealed class TrayService(MonitorViewModel monitor, FanControlViewModel fans, WidgetService widget) : IDisposable
 {
     /// <summary>Windows shows at most this many characters of a notification-area tooltip.</summary>
     private const int ToolTipLimit = 127;
@@ -23,6 +23,7 @@ public sealed class TrayService(MonitorViewModel monitor, FanControlViewModel fa
     private readonly List<RadioMenuFlyoutItem> _modeItems = [];
     private MenuFlyoutSubItem? _fanMenu;
     private MenuFlyoutSubItem? _operatingModeMenu;
+    private ToggleMenuFlyoutItem? _widgetItem;
 
     public void Initialize()
     {
@@ -62,6 +63,9 @@ public sealed class TrayService(MonitorViewModel monitor, FanControlViewModel fa
             menu.MenuFlyoutPresenterStyle = presenter;
         }
         menu.Items.Add(Item(Strings.Get("Tray_Open"), () => App.Current.ShowMainWindow()));
+        _widgetItem = new ToggleMenuFlyoutItem { Text = Strings.Get("Tray_Widget") };
+        _widgetItem.Click += (_, _) => widget.Toggle();
+        menu.Items.Add(_widgetItem);
         menu.Items.Add(new MenuFlyoutSeparator());
 
         _fanMenu = new MenuFlyoutSubItem { Text = Strings.Get("Tray_FanMode") };
@@ -94,6 +98,8 @@ public sealed class TrayService(MonitorViewModel monitor, FanControlViewModel fa
 
     private void SyncMenu()
     {
+        if (_widgetItem is not null)
+            _widgetItem.IsChecked = widget.IsVisible;
         if (_fanMenu is not null)
             _fanMenu.Visibility = fans.CoolingAvailable ? Visibility.Visible : Visibility.Collapsed;
         for (var i = 0; i < _modeItems.Count; i++)

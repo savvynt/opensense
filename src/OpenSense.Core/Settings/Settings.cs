@@ -29,6 +29,14 @@ public sealed record UiSettings
 
     /// <summary>The app's language (a Strings folder name such as "de-DE"), or null to follow Windows.</summary>
     public string? Language { get; init; }
+
+    /// <summary>The small always-on-top widget (temperatures, power, fan mode, overclock) is on screen; it comes back at the next start.</summary>
+    public bool WidgetVisible { get; init; }
+
+    /// <summary>Where the widget was left, in screen pixels; null until it has been moved.</summary>
+    public int? WidgetX { get; init; }
+
+    public int? WidgetY { get; init; }
 }
 
 /// <summary>A key (Windows virtual-key code) and the modifier keys held with it, as RegisterHotKey takes them.</summary>

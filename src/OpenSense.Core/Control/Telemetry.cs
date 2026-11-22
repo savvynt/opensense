@@ -39,6 +39,15 @@ public sealed record Telemetry
 
     public bool GpuAsleep { get; init; }
 
+    /// <summary>CPU package power in watts (Intel, through PawnIO), averaged over the last sample; null where it can't be read.</summary>
+    public double? CpuPower { get; init; }
+
+    /// <summary>The discrete GPU's board power in watts, from the NVIDIA driver; null while it is asleep or the driver doesn't say.</summary>
+    public double? GpuPower { get; init; }
+
+    /// <summary>The most the GPU's driver lets it draw, in watts.</summary>
+    public double? GpuPowerLimit { get; init; }
+
     /// <summary>Where the chips start slowing down, which Auto's boost goes by (<see cref="AntiThrottle"/>).</summary>
     public ThermalLimits Limits { get; init; } = ThermalLimits.Default;
 

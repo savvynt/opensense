@@ -2040,4 +2040,8 @@ Details: {1}</value>
     <value>Try again</value>
     <comment>Button to retry opening the page after a navigation failure.</comment>
   </data>
+  <data name="Tray_Widget" xml:space="preserve">
+    <value>Widget</value>
+    <comment>Notification-area menu item that shows or hides the small always-on-top window with the temperatures, power, fan mode and GPU overclock switch. Short; checked while the widget is shown.</comment>
+  </data>
 </root>

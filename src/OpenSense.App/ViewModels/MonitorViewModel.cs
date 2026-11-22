@@ -93,6 +93,18 @@ public sealed partial class MonitorViewModel : ObservableObject
     public partial double? CpuLoad { get; set; }
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CpuPowerText))]
+    public partial double? CpuPower { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(GpuPowerText), nameof(GpuPowerLimitText))]
+    public partial double? GpuPower { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(GpuPowerLimitText))]
+    public partial double? GpuPowerLimit { get; set; }
+
+    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(GpuLoadText))]
     public partial double? GpuLoad { get; set; }
 
@@ -129,6 +141,13 @@ public sealed partial class MonitorViewModel : ObservableObject
 
     public string CpuLoadText => Units.Percent(CpuLoad);
 
+    public string CpuPowerText => Units.Power(CpuPower);
+
+    public string GpuPowerText => Units.Power(GpuPower);
+
+    /// <summary>"/ 80 W": what the GPU may draw at most, after what it draws; empty while that isn't known.</summary>
+    public string GpuPowerLimitText => GpuPowerLimit is { } limit && GpuPower is not null ? "/ " + Units.Power(limit) : "";
+
     public string GpuLoadText => Units.Percent(GpuLoad);
 
     public string UnitSymbol => UseFahrenheit ? "°F" : "°C";
@@ -163,6 +182,9 @@ public sealed partial class MonitorViewModel : ObservableObject
         GpuAsleep = t.GpuAsleep;
         CpuLoad = t.CpuLoad;
         GpuLoad = t.GpuLoad;
+        CpuPower = t.CpuPower;
+        GpuPower = t.GpuPower;
+        GpuPowerLimit = t.GpuPowerLimit;
         SystemTemperature = t.SystemTemperature;
 
         CpuTemperature = t.CpuTemperature;

@@ -28,8 +28,11 @@ public sealed class DirectSensors : IDisposable
 
     /// <param name="cpuDefaultLimit">The CPU's limit when its sensor doesn't report one: Intel's usual TjMax unless given.</param>
     internal DirectSensors(ITemperatureSensor? cpu, ITemperatureSensor? gpu, IGpuPowerState? gpuPower, SensorStatus cpuStatus, SensorStatus gpuStatus,
-        IGpuClockControl? gpuClocks = null, IDisposable? library = null, int cpuDefaultLimit = ThermalLimits.IntelCpuDefault)
+        IGpuClockControl? gpuClocks = null, IDisposable? library = null, int cpuDefaultLimit = ThermalLimits.IntelCpuDefault,
+        IPowerSensor? cpuPower = null, IGpuPowerMeter? gpuPowerMeter = null)
     {
+        CpuPower = cpuPower;
+        GpuPowerMeter = gpuPowerMeter;
         Cpu = cpu;
         Gpu = gpu;
         GpuPower = gpuPower;
@@ -42,6 +45,12 @@ public sealed class DirectSensors : IDisposable
 
     public ITemperatureSensor? Cpu { get; }
     public ITemperatureSensor? Gpu { get; }
+
+    /// <summary>CPU package power; null on a CPU or setup that doesn't give it (see <see cref="IntelRaplSensor"/>).</summary>
+    public IPowerSensor? CpuPower { get; }
+
+    /// <summary>The NVIDIA GPU's power draw and limit, where its driver has them.</summary>
+    public IGpuPowerMeter? GpuPowerMeter { get; }
 
     /// <summary>Whether the GPU is on, as Windows sees it; without it the firmware's reading decides.</summary>
     public IGpuPowerState? GpuPower { get; }
@@ -93,6 +102,32 @@ public sealed class DirectSensors : IDisposable
         }
     }
 
+    /// <summary>CPU package power in watts, averaged since the last call; null when unavailable.</summary>
+    public double? ReadCpuWatts()
+    {
+        try
+        {
+            return CpuPower?.ReadWatts();
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The GPU's power draw and limit; call only while the GPU is on, as for <see cref="ReadGpu"/>.</summary>
+    public GpuPowerReading ReadGpuWatts()
+    {
+        try
+        {
+            return GpuPowerMeter?.Read() ?? default;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return default;
+        }
+    }
+
     public bool? ReadGpuPower()
     {
         try
@@ -123,6 +158,8 @@ public sealed class DirectSensors : IDisposable
         ITemperatureSensor? gpu = nvml is null ? null : TryOpen(() => NvmlGpuSensor.TryOpen(nvml),
             ex => gpuFailure = SensorStatus.Failed(SensorProblem.NoReading, ex.Message));
         var clocks = nvml is null ? null : TryOpen(() => NvmlGpuClocks.TryOpen(nvml, discrete?.PnpHardwareId ?? ""), _ => { });
+        var cpuPower = TryOpen(() => IntelRaplSensor.TryOpen(), _ => { });
+        var gpuPowerMeter = nvml is null ? null : TryOpen(() => NvmlGpuPower.TryOpen(nvml), _ => { });
         if (gpu is null && discrete is not null)
             gpu = TryOpen(() => WindowsGpuSensor.TryOpen(discrete, (problem, detail) => gpuFailure = SensorStatus.Failed(problem, detail)),
                 ex => gpuFailure = SensorStatus.Failed(SensorProblem.NoReading, ex.Message));
@@ -133,7 +170,7 @@ public sealed class DirectSensors : IDisposable
         var onlyGpu = adapters.Select(a => a.PnpHardwareId).Distinct().Count() == 1;
         var gpuPower = gpu is not null && discrete is not null ? TryOpen(() => WindowsGpuPowerState.TryOpen(discrete, onlyGpu), _ => { }) : null;
         return new DirectSensors(cpu, gpu, gpuPower, cpu?.Status ?? cpuFailure ?? SensorStatus.NotUsed, gpu?.Status ?? gpuFailure ?? SensorStatus.NotUsed,
-            clocks, nvml, DefaultCpuLimit());
+            clocks, nvml, DefaultCpuLimit(), cpuPower, gpuPowerMeter);
     }
 
     private static int DefaultCpuLimit()
@@ -165,6 +202,7 @@ public sealed class DirectSensors : IDisposable
     {
         Cpu?.Dispose();
         Gpu?.Dispose();
+        CpuPower?.Dispose();
         _library?.Dispose();
     }
 }

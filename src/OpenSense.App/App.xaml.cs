@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml;
 using OpenSense.App.Services;
 using OpenSense.App.Startup;
 using OpenSense.App.ViewModels;
+using OpenSense.App.Views;
 using OpenSense.Core.Settings;
 using OpenSense.Core.Updates;
 using Serilog;
@@ -66,6 +67,7 @@ public partial class App : Application
         shortcut.Pressed += ShowMainWindow;
         shortcut.Set(settings.Ui.OpenShortcut);
         await Services.GetRequiredService<ShellViewModel>().InitializeAsync();
+        Services.GetRequiredService<WidgetService>().Restore(); // once the view models have their data
     }
 
     private IHost BuildHost()
@@ -84,6 +86,7 @@ public partial class App : Application
         builder.Services.AddSingleton<DeviceSession>();
         builder.Services.AddSingleton<NotificationService>();
         builder.Services.AddSingleton<TrayService>();
+        builder.Services.AddSingleton<WidgetService>();
         builder.Services.AddSingleton<ToastService>();
         builder.Services.AddSingleton<NavigationService>();
         builder.Services.AddSingleton<NitroSenseKey>();
@@ -111,6 +114,7 @@ public partial class App : Application
         builder.Services.AddSingleton<UpdateViewModel>();
 
         builder.Services.AddSingleton<MainWindow>();
+        builder.Services.AddSingleton<WidgetWindow>(); // made when the widget is first shown
         return builder.Build();
     }
 
@@ -151,6 +155,7 @@ public partial class App : Application
             Close(Services.GetRequiredService<NitroSenseKey>);
             Close(Services.GetRequiredService<OpenShortcut>);
             Close(Services.GetRequiredService<ToastService>);
+            Close(Services.GetRequiredService<WidgetService>);
             Close(Services.GetRequiredService<TrayService>);
             Close(Services.GetRequiredService<DeviceSession>); // the service keeps control; a hosted engine hands the fans back
             Close(Services.GetRequiredService<SettingsService>);
