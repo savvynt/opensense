@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using OpenSense.Core.Control;
 using OpenSense.Core.Hardware;
 using OpenSense.Core.Lighting;
+using OpenSense.Core.Monitoring;
 
 namespace OpenSense.Core.Settings;
 
@@ -69,11 +70,12 @@ public sealed record UserSettings
 public sealed record MachineSettings
 {
     /// <summary>What <see cref="Upgrade"/> brings settings to.</summary>
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
 
     /// <summary>
     /// 2: lighting per light in <see cref="Lighting"/> (version 1 kept the keyboard's in <see cref="Keyboard"/>).
     /// 3: GPU offsets apply only while overclocking is switched on (<see cref="GpuClockSettings.Enabled"/>).
+    /// 4: one fan curve for every fan (<see cref="ControlProfile.Curve"/>), where version 3 kept one per fan.
     /// </summary>
     public int Version { get; init; } = CurrentVersion;
     public ControlProfile Profile { get; init; } = new();
@@ -108,7 +110,27 @@ public sealed record MachineSettings
             var set = !clocks.Fixed.IsNone || clocks.Modes.Values.Any(o => !o.IsNone);
             settings = settings with { Profile = settings.Profile with { GpuClocks = clocks with { Enabled = set } } };
         }
+        if (settings.Version < 4)
+            settings = settings with { Profile = SharedCurve(settings.Profile) };
         return settings with { Version = CurrentVersion };
+    }
+
+    /// <summary>
+    /// The profile with the one curve that stands for the per-fan curves of version 3: that of the first fan (CPU, then
+    /// GPUs) that followed a curve, else the first one the user set apart from the standard ones, else the new standard.
+    /// </summary>
+    private static ControlProfile SharedCurve(ControlProfile profile)
+    {
+        var chosen = profile.Curve;
+        if (profile.Curves is { } curves)
+        {
+            var fans = curves.Keys.Order().ToList();
+            var followed = fans.Where(f => profile.ManualFor(f).UseCurve);
+            var edited = fans.Where(f => curves[f].Curve != AntiThrottle.For(FanChannel.Get(f).Chip, ThermalLimits.Default));
+            if (followed.Concat(edited).Cast<FanId?>().FirstOrDefault() is { } fan)
+                chosen = curves[fan].Curve;
+        }
+        return profile with { Curve = chosen, Curves = null };
     }
 }
 

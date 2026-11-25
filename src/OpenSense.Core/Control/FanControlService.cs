@@ -49,6 +49,9 @@ public sealed class FanControlService : IDeviceDispatcher, IDisposable
 
     // Anti-throttle's curve in Custom, where speeds are the fans' own: past its start a fan runs at full speed.
     private readonly Dictionary<FanId, CurveFollower> _limitFollowers = new();
+
+    // Custom mode's one curve, for every fan that follows a curve: not per fan, as the chips share the heatsink.
+    private readonly CurveFollower _sharedFollower = new();
     private readonly List<DateTime> _reapplyAt = [];
     private readonly object _gate = new();
 
@@ -65,8 +68,9 @@ public sealed class FanControlService : IDeviceDispatcher, IDisposable
     private ThermalLimits _limits = ThermalLimits.Default;
     private readonly Dictionary<FanId, int?> _rpm = new();
 
-    // Curve steps: each fan's temperature summed since the last step.
+    // Curve steps: each fan's temperature summed since the last step, and the chips' own for the shared curve.
     private readonly Dictionary<FanId, (double Sum, int Count)> _curveTemps = new();
+    private (double Sum, int Count) _cpuWindow, _gpuWindow;
     private DateTime _lastCurveStep = DateTime.MinValue;
     private ControlProfile? _curveProfile;
     private FanControlMode? _curveMode;
@@ -468,6 +472,10 @@ public sealed class FanControlService : IDeviceDispatcher, IDisposable
                 _curveTemps[fan.Id] = (sum + t, count + 1);
             }
         }
+        if (_cpuTemp is { } cpuNow)
+            _cpuWindow = (_cpuWindow.Sum + cpuNow, _cpuWindow.Count + 1);
+        if (_gpuTemp is { } gpuNow)
+            _gpuWindow = (_gpuWindow.Sum + gpuNow, _gpuWindow.Count + 1);
 
         try
         {
@@ -627,6 +635,7 @@ public sealed class FanControlService : IDeviceDispatcher, IDisposable
         {
             foreach (var follower in _followers.Values.Concat(_limitFollowers.Values))
                 follower.Reset();
+            _sharedFollower.Reset();
         }
         var curveStep = now - _lastCurveStep >= CurveInterval * 0.9 || effective != _curveMode || !ReferenceEquals(profile, _curveProfile);
 
@@ -634,6 +643,7 @@ public sealed class FanControlService : IDeviceDispatcher, IDisposable
         if (curveStep)
         {
             _curveTemps.Clear();
+            _cpuWindow = _gpuWindow = default;
             _lastCurveStep = now;
             _curveProfile = profile;
             _curveMode = effective;
@@ -693,18 +703,19 @@ public sealed class FanControlService : IDeviceDispatcher, IDisposable
             return (FanBehavior.Auto, null);
 
         var manual = profile.ManualFor(fan.Id);
-        var curve = mode == FanControlMode.Auto ? AntiThrottle.For(fan.Chip, _limits)
-            : manual.UseCurve ? profile.CurveFor(fan.Id).Curve
-            : null;
         int percent;
-        if (curve is null)
+        if (mode == FanControlMode.Auto)
         {
-            _followers[fan.Id].Reset();
-            percent = manual.Percent;
+            percent = FollowCurve(fan, AntiThrottle.For(fan.Chip, _limits), curveStep);
+        }
+        else if (manual.UseCurve)
+        {
+            percent = FollowSharedCurve(profile.Curve, curveStep);
         }
         else
         {
-            percent = FollowCurve(fan, curve, curveStep);
+            _followers[fan.Id].Reset();
+            percent = manual.Percent;
         }
 
         // The firmware only boosts in tens: send the nearest one it does, not one it would round down.
@@ -739,6 +750,29 @@ public sealed class FanControlService : IDeviceDispatcher, IDisposable
             return 0;
         }
         return follower.Current ?? 100;
+    }
+
+    /// <summary>
+    /// Custom mode's curve for a fan that follows it: the same boost for all of them, as <see cref="SharedCurveTemperature"/>
+    /// gives it. A temperature nobody can read holds the last boost, or full speed before there was one.
+    /// </summary>
+    private int FollowSharedCurve(FanCurve curve, bool curveStep)
+    {
+        if (!curveStep && _sharedFollower.Current is { } held)
+            return held;
+        return SharedCurveTemperature() is { } temperature ? _sharedFollower.Update(temperature, curve) : _sharedFollower.Current ?? 100;
+    }
+
+    /// <summary>
+    /// The higher of the CPU's and the GPU's temperature, each averaged over the curve step as a fan's own is: the two
+    /// chips share the heatsink, so whichever is hotter is what the fans have to cool. A GPU without a temperature (asleep,
+    /// or with no sensor) leaves the CPU's alone.
+    /// </summary>
+    private double? SharedCurveTemperature()
+    {
+        var cpu = _cpuWindow.Count > 0 ? _cpuWindow.Sum / _cpuWindow.Count : _cpuTemp;
+        var gpu = _gpuWindow.Count > 0 ? _gpuWindow.Sum / _gpuWindow.Count : _gpuTemp;
+        return cpu is { } c && gpu is { } g ? Math.Max(c, g) : cpu ?? gpu;
     }
 
     /// <summary>

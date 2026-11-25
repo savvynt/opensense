@@ -16,10 +16,11 @@ public sealed class WidgetService(IServiceProvider services, SettingsService set
 
     private WidgetWindow? _window;
     private PointInt32? _position;
+    private bool _wasVisible;
 
     public bool IsVisible => _window?.AppWindow.IsVisible == true;
 
-    /// <summary>The widget was shown or hidden.</summary>
+    /// <summary>The widget was shown or hidden, however that came about: the tray's menu, the window's close button, Windows.</summary>
     public event Action? VisibilityChanged;
 
     /// <summary>Brings the widget back if it was on screen when OpenSense last ran (without taking the keyboard from what the user is doing).</summary>
@@ -42,7 +43,7 @@ public sealed class WidgetService(IServiceProvider services, SettingsService set
         var window = EnsureWindow();
         window.AppWindow.Show(activate);
         Remember(true);
-        VisibilityChanged?.Invoke();
+        NotifyVisibility();
     }
 
     public void Hide()
@@ -52,7 +53,7 @@ public sealed class WidgetService(IServiceProvider services, SettingsService set
         SavePosition();
         window.AppWindow.Hide();
         Remember(false);
-        VisibilityChanged?.Invoke();
+        NotifyVisibility();
     }
 
     private WidgetWindow EnsureWindow()
@@ -81,6 +82,18 @@ public sealed class WidgetService(IServiceProvider services, SettingsService set
     {
         if (args.DidPositionChange && sender.IsVisible)
             _position = sender.Position;
+        if (args.DidVisibilityChange)
+            NotifyVisibility();
+    }
+
+    /// <summary>Tells the tray menu when what the window shows differs from what it was last told, and only then.</summary>
+    private void NotifyVisibility()
+    {
+        var visible = IsVisible;
+        if (visible == _wasVisible)
+            return;
+        _wasVisible = visible;
+        VisibilityChanged?.Invoke();
     }
 
     /// <summary>Where it was left, if that is still on a screen; else the top right corner of the main one.</summary>

@@ -1,34 +1,34 @@
 namespace OpenSense.Core.Control;
 
 /// <summary>
-/// Turns a fan's curve-step temperatures into a steady boost. It follows the higher of the last two readings,
-/// so the fans speed up at once but only slow down when the next reading confirms the drop (95 then 89 holds
-/// 95's boost; a following 88 moves to 89's). Changes under <see cref="MinChangePercent"/> are not sent.
+/// Turns a fan's curve-step temperatures into a steady boost. The temperature the curve is read at never lags a rise,
+/// so the fans speed up at once, but it only comes down once the temperature is more than <see cref="Hysteresis"/> °C
+/// under it, and then to that far above the temperature: it always stays within <see cref="Hysteresis"/> °C above the
+/// real one, never below. A temperature that wobbles by less than that, as the CPU's does under a changing load, holds
+/// the boost where it is instead of nudging the fans between the firmware's speed steps every few seconds.
 /// </summary>
 public sealed class CurveFollower
 {
-    private const int MinChangePercent = 2;
+    /// <summary>How far (°C) the temperature has to fall before the boost follows it down.</summary>
+    public const double Hysteresis = 2.0;
 
-    private double? _previous;
+    private double? _held;
 
     public int? Current { get; private set; }
 
     public void Reset()
     {
-        _previous = null;
+        _held = null;
         Current = null;
     }
 
     public int Update(double temperature, FanCurve curve)
     {
-        var effective = _previous is { } previous ? Math.Max(previous, temperature) : temperature;
-        _previous = temperature;
+        // Up: the temperature itself. Down: only once it is more than Hysteresis under what is held, and then that far above it.
+        var held = _held is { } previous ? Math.Max(temperature, Math.Min(previous, temperature + Hysteresis)) : temperature;
+        _held = held;
 
-        var target = Math.Clamp(curve.Evaluate(effective), 0, 100);
-        if (Current is { } current && Math.Abs(target - current) < MinChangePercent && target is not (0 or 100))
-            target = current;
-
-        Current = target;
-        return target;
+        Current = Math.Clamp(curve.Evaluate(held), 0, 100);
+        return Current.Value;
     }
 }

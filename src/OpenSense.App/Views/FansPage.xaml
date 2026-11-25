@@ -139,38 +139,45 @@
                 </StackPanel>
             </toolkit:SettingsCard>
 
-            <!-- Custom: per fan, a fixed boost or a curve -->
-            <ItemsControl ItemsSource="{x:Bind Fans.ManualFans}" Visibility="{x:Bind Fans.IsCustom, Mode=OneWay}">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <StackPanel Spacing="16" />
-                    </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="vm:ManualFanViewModel">
-                        <Border Style="{StaticResource CardStyle}">
-                            <StackPanel Spacing="12">
-                                <Grid ColumnSpacing="8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock
-                                        VerticalAlignment="Center"
-                                        Style="{StaticResource SubtitleTextBlockStyle}"
-                                        Text="{x:Bind Name}" />
-                                    <ContentControl
-                                        Grid.Column="1"
-                                        Content="{x:Bind Curve}"
-                                        ContentTemplate="{StaticResource CurveToolbarTemplate}"
-                                        Visibility="{x:Bind UseCurve, Mode=OneWay}" />
-                                    <toolkit:Segmented Grid.Column="2" SelectedIndex="{x:Bind KindIndex, Mode=TwoWay}">
-                                        <toolkit:SegmentedItem x:Uid="Fans_BoostFixed" />
-                                        <toolkit:SegmentedItem x:Uid="Fans_BoostCurve" />
-                                    </toolkit:Segmented>
-                                </Grid>
-                                <StackPanel Spacing="12" Visibility="{x:Bind IsFixed, Mode=OneWay}">
+            <!-- Custom: a fixed boost per fan, or one curve for all of them (the CPU and the GPU share the heatsink: it goes by the hotter) -->
+            <StackPanel Spacing="16" Visibility="{x:Bind Fans.IsCustom, Mode=OneWay}">
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="12">
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <ContentControl
+                                Grid.Column="1"
+                                Content="{x:Bind Fans.Curve}"
+                                ContentTemplate="{StaticResource CurveToolbarTemplate}"
+                                Visibility="{x:Bind Fans.UseCurve, Mode=OneWay}" />
+                            <toolkit:Segmented Grid.Column="2" SelectedIndex="{x:Bind Fans.KindIndex, Mode=TwoWay}">
+                                <toolkit:SegmentedItem x:Uid="Fans_BoostFixed" />
+                                <toolkit:SegmentedItem x:Uid="Fans_BoostCurve" />
+                            </toolkit:Segmented>
+                        </Grid>
+                        <ContentControl
+                            HorizontalContentAlignment="Stretch"
+                            Content="{x:Bind Fans.Curve}"
+                            ContentTemplate="{StaticResource CurveEditorTemplate}"
+                            Visibility="{x:Bind Fans.UseCurve, Mode=OneWay}" />
+                    </StackPanel>
+                </Border>
+
+                <ItemsControl ItemsSource="{x:Bind Fans.ManualFans}" Visibility="{x:Bind Fans.IsFixed, Mode=OneWay}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Spacing="16" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:ManualFanViewModel">
+                            <Border Style="{StaticResource CardStyle}">
+                                <StackPanel Spacing="12">
+                                    <TextBlock Style="{StaticResource SubtitleTextBlockStyle}" Text="{x:Bind Name}" />
                                     <TextBlock Style="{StaticResource BigNumberStyle}" Text="{x:Bind PercentText, Mode=OneWay}" />
                                     <Slider
                                         Header="{x:Bind PercentHeader}"
@@ -182,16 +189,11 @@
                                         TickPlacement="Outside"
                                         Value="{x:Bind Percent, Mode=TwoWay}" />
                                 </StackPanel>
-                                <ContentControl
-                                    HorizontalContentAlignment="Stretch"
-                                    Content="{x:Bind Curve}"
-                                    ContentTemplate="{StaticResource CurveEditorTemplate}"
-                                    Visibility="{x:Bind UseCurve, Mode=OneWay}" />
-                            </StackPanel>
-                        </Border>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
 
             <TextBlock x:Uid="Fans_Safety" Style="{StaticResource SectionHeaderStyle}" />
             <toolkit:SettingsCard x:Uid="Fans_HandBack" HeaderIcon="{ui:FontIcon Glyph=&#xE7E8;}">

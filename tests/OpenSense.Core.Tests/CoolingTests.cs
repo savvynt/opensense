@@ -101,22 +101,45 @@ public class ThreeFanControlTests
         Assert.Null(system.BoostPercent);
     }
 
-    [Fact]
-    public void A_second_gpu_fan_follows_the_gpu()
+    [Theory]
+    [InlineData(80, 60)]
+    [InlineData(60, 80)]
+    public void Every_fan_on_the_curve_follows_whichever_chip_is_hotter(int cpu, int gpu)
     {
         var profile = new ControlProfile
         {
             Mode = FanControlMode.Custom,
-            Manual = new Dictionary<FanId, ManualFanSetting> { [FanId.Cpu] = new(0), [FanId.Gpu] = new(0), [FanId.Gpu2] = new(UseCurve: true) },
-            Curves = new Dictionary<FanId, CurveFanSetting> { [FanId.Gpu2] = new(FanCurve.From((40, 0), (80, 80))) }, // 2 % per °C
+            Manual = new Dictionary<FanId, ManualFanSetting> { [FanId.Cpu] = new(0, UseCurve: true), [FanId.Gpu] = new(0, UseCurve: true), [FanId.Gpu2] = new(0, UseCurve: true) },
+            Curve = FanCurve.From((40, 0), (80, 80)), // 2 % per °C
         };
         var (service, fw) = Create(profile);
-        fw.CpuTemp = 80;
-        fw.GpuTemp = 60;
+        fw.CpuTemp = cpu;
+        fw.GpuTemp = gpu;
 
         service.Tick();
 
-        Assert.Equal(40, fw.Speed[5]);
+        Assert.Equal(80, fw.Speed[1]); // CPU fan
+        Assert.Equal(80, fw.Speed[4]); // GPU fan
+        Assert.Equal(80, fw.Speed[5]); // GPU 2 fan
+    }
+
+    [Fact]
+    public void A_fan_not_on_the_curve_keeps_its_fixed_boost()
+    {
+        var profile = new ControlProfile
+        {
+            Mode = FanControlMode.Custom,
+            Manual = new Dictionary<FanId, ManualFanSetting> { [FanId.Cpu] = new(30), [FanId.Gpu] = new(0, UseCurve: true), [FanId.Gpu2] = new(0, UseCurve: true) },
+            Curve = FanCurve.From((40, 0), (80, 80)),
+        };
+        var (service, fw) = Create(profile);
+        fw.CpuTemp = 60;
+        fw.GpuTemp = 70;
+
+        service.Tick();
+
+        Assert.Equal(30, fw.Speed[1]);
+        Assert.Equal(60, fw.Speed[4]); // 70 °C, the hotter chip
     }
 
     [Fact]

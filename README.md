@@ -37,7 +37,7 @@ Help translate OpenSense and this page into your language: see [Translations](#t
 ## Features
 
 - **Real temperatures.** CPU and GPU are read from the chips themselves, like HWiNFO and ThrottleStop do, with 5-minute graphs.
-- **Fan control.** Auto, which OpenSense speeds up when the laptop gets hot (unless you turn that off), Max, or Custom: speed added to each fan, fixed or following a curve you draw. On laptops that have them, the firmware's own fan curve can be made faster and DustDefender blows the dust out.
+- **Fan control.** Auto, which OpenSense speeds up when the laptop gets hot (unless you turn that off), Max, or Custom: speed added to each fan, fixed, or every fan following one curve you draw, which goes by whichever of the CPU and the GPU is hotter. Fan speed changes are damped, so a temperature that wobbles doesn't keep nudging the fans up and down. On laptops that have them, the firmware's own fan curve can be made faster and DustDefender blows the dust out.
 - **Widget.** A small always-on-top window with CPU and GPU temperature and power, the fans' speeds, the fan mode (Auto, Max, Custom) and the GPU overclock switch. Turn it on from the notification-area menu; it remembers where you left it. CPU power needs PawnIO and an Intel CPU, GPU power an NVIDIA driver.
 - **Safe by default.** Anti-throttle brings the fans up to full speed as the processor nears its throttling point, and the firmware takes over again if a sensor or OpenSense stops.
 - **Performance.** Operating modes, CoolBoost, GPU overclock for each mode and Windows power plans. The Mode key switches between the modes, and battery power has its own mode. On 2024 and later Predators, Acer's own GPU overclock for each mode is added on top.

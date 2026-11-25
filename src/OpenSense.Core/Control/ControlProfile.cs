@@ -22,7 +22,7 @@ public enum FanControlMode
 /// <summary>One fan in Custom mode: a fixed boost, or the boost its curve gives.</summary>
 public sealed record ManualFanSetting(int Percent = 30, bool UseCurve = false);
 
-/// <summary>A fan's curve in Custom mode. It follows the fan's own chip: the CPU fan the CPU, GPU fans the GPU.</summary>
+/// <summary>A fan's own curve, as settings before version 4 kept them (see <see cref="ControlProfile.Curves"/>).</summary>
 public sealed record CurveFanSetting(FanCurve Curve);
 
 public sealed record SafetySettings
@@ -44,12 +44,17 @@ public sealed record ControlProfile
         [FanId.Gpu] = new(),
     };
 
-    /// <summary>Custom mode's curves, used by fans set to <see cref="ManualFanSetting.UseCurve"/>.</summary>
-    public IReadOnlyDictionary<FanId, CurveFanSetting> Curves { get; init; } = new Dictionary<FanId, CurveFanSetting>
-    {
-        [FanId.Cpu] = DefaultCurve(FanId.Cpu),
-        [FanId.Gpu] = DefaultCurve(FanId.Gpu),
-    };
+    /// <summary>
+    /// Custom mode's one curve, followed by every fan set to <see cref="ManualFanSetting.UseCurve"/>: the CPU and the GPU
+    /// share the heatsink, so it goes by whichever of them is hotter.
+    /// </summary>
+    public FanCurve Curve { get; init; } = AntiThrottle.Shared(ThermalLimits.Default);
+
+    /// <summary>
+    /// Settings before version 4 kept a curve per fan here; <see cref="MachineSettings.Upgrade"/> reads it once, to pick
+    /// <see cref="Curve"/>, and clears it.
+    /// </summary>
+    public IReadOnlyDictionary<FanId, CurveFanSetting>? Curves { get; init; }
 
     /// <summary>Desired CoolBoost state; null leaves the firmware setting alone.</summary>
     public bool? CoolBoost { get; init; }
@@ -82,11 +87,6 @@ public sealed record ControlProfile
 
     public ManualFanSetting ManualFor(FanId fan) => Manual.GetValueOrDefault(fan) ?? new ManualFanSetting();
 
-    public CurveFanSetting CurveFor(FanId fan) => Curves.GetValueOrDefault(fan) ?? DefaultCurve(fan);
-
     /// <summary>OpenSense adds speed on top of the firmware's in <paramref name="mode"/> (as opposed to leaving Auto alone).</summary>
     public bool Boosts(FanControlMode mode) => mode == FanControlMode.Custom || (mode == FanControlMode.Auto && AutoBoost);
-
-    /// <summary>A curve nobody has set yet: Auto's, for the usual limits (the app offers the laptop's own as a preset).</summary>
-    private static CurveFanSetting DefaultCurve(FanId fan) => new(AntiThrottle.For(FanChannel.Get(fan).Chip, ThermalLimits.Default));
 }

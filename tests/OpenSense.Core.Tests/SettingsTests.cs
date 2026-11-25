@@ -25,11 +25,7 @@ public sealed class SettingsTests : IDisposable
             {
                 Mode = FanControlMode.Custom,
                 Manual = new Dictionary<FanId, ManualFanSetting> { [FanId.Cpu] = new(40, UseCurve: true), [FanId.Gpu] = new(20) },
-                Curves = new Dictionary<FanId, CurveFanSetting>
-                {
-                    [FanId.Cpu] = new(FanCurve.From((35, 10), (70, 60), (90, 100))),
-                    [FanId.Gpu] = new(AntiThrottle.Gpu(ThermalLimits.GpuDefault)),
-                },
+                Curve = FanCurve.From((35, 10), (70, 60), (90, 100)),
                 AutoBoost = false,
                 OperatingMode = OperatingMode.Performance,
                 Safety = new SafetySettings { RestoreAutoOnExit = false },
@@ -45,8 +41,8 @@ public sealed class SettingsTests : IDisposable
 
         Assert.Equal(FanControlMode.Custom, loaded.Profile.Mode);
         Assert.Equal(new ManualFanSetting(40, UseCurve: true), loaded.Profile.ManualFor(FanId.Cpu));
-        Assert.Equal(original.Profile.CurveFor(FanId.Cpu), loaded.Profile.CurveFor(FanId.Cpu));
-        Assert.Equal(AntiThrottle.Gpu(ThermalLimits.GpuDefault), loaded.Profile.CurveFor(FanId.Gpu).Curve);
+        Assert.Equal(original.Profile.Curve, loaded.Profile.Curve);
+        Assert.Null(loaded.Profile.Curves);
         Assert.False(loaded.Profile.AutoBoost);
         Assert.Equal(OperatingMode.Performance, loaded.Profile.OperatingMode);
         Assert.Equal(original.Profile.Safety, loaded.Profile.Safety);
@@ -58,6 +54,59 @@ public sealed class SettingsTests : IDisposable
         Assert.False(loaded.Keyboard.WindowsKey);
         Assert.Null(loaded.Keyboard.LcdOverdrive);
         Assert.True(loaded.Overrides.OperatingModes);
+    }
+
+    private MachineSettings LoadUpgraded(string json)
+    {
+        Directory.CreateDirectory(_directory);
+        File.WriteAllText(SettingsPath, json);
+        return new SettingsStore<MachineSettings>(SettingsPath).Load().Upgrade();
+    }
+
+    [Fact]
+    public void Per_fan_curves_become_the_one_of_the_first_fan_that_followed_a_curve()
+    {
+        var upgraded = LoadUpgraded("""
+            { "Version": 3, "Profile": { "Mode": "Custom",
+              "Manual": { "Cpu": { "Percent": 40, "UseCurve": false }, "Gpu": { "Percent": 20, "UseCurve": true } },
+              "Curves": {
+                "Cpu": { "Curve": { "Points": [ { "Temperature": 50, "Percent": 10 }, { "Temperature": 90, "Percent": 90 } ] } },
+                "Gpu": { "Curve": { "Points": [ { "Temperature": 40, "Percent": 0 }, { "Temperature": 80, "Percent": 80 } ] } } } } }
+            """);
+
+        Assert.Equal(FanCurve.From((40, 0), (80, 80)), upgraded.Profile.Curve);
+        Assert.Null(upgraded.Profile.Curves);
+        Assert.Equal(MachineSettings.CurrentVersion, upgraded.Version);
+    }
+
+    [Fact]
+    public void Standard_per_fan_curves_become_the_new_standard_and_a_set_one_is_kept()
+    {
+        var standard = LoadUpgraded("""
+            { "Version": 3, "Profile": { "Curves": {
+                "Cpu": { "Curve": { "Points": [ { "Temperature": 88, "Percent": 0 }, { "Temperature": 94, "Percent": 100 } ] } },
+                "Gpu": { "Curve": { "Points": [ { "Temperature": 81, "Percent": 0 }, { "Temperature": 87, "Percent": 100 } ] } } } } }
+            """);
+        Assert.Equal(AntiThrottle.Shared(ThermalLimits.Default), standard.Profile.Curve);
+
+        var edited = LoadUpgraded("""
+            { "Version": 3, "Profile": { "Curves": {
+                "Cpu": { "Curve": { "Points": [ { "Temperature": 88, "Percent": 0 }, { "Temperature": 94, "Percent": 100 } ] } },
+                "Gpu": { "Curve": { "Points": [ { "Temperature": 45, "Percent": 10 }, { "Temperature": 85, "Percent": 100 } ] } } } } }
+            """);
+        Assert.Equal(FanCurve.From((45, 10), (85, 100)), edited.Profile.Curve);
+    }
+
+    [Fact]
+    public void The_shared_standard_curve_is_never_under_either_chips_own()
+    {
+        var limits = ThermalLimits.Default;
+        var shared = AntiThrottle.Shared(limits);
+        for (var temperature = 40; temperature <= 100; temperature++)
+        {
+            Assert.True(shared.Evaluate(temperature) >= AntiThrottle.Cpu(limits.Cpu).Evaluate(temperature), $"CPU {temperature} °C");
+            Assert.True(shared.Evaluate(temperature) >= AntiThrottle.Gpu(limits.Gpu).Evaluate(temperature), $"GPU {temperature} °C");
+        }
     }
 
     [Fact]
@@ -81,7 +130,7 @@ public sealed class SettingsTests : IDisposable
 
         Assert.Equal(FanControlMode.Max, loaded.Profile.Mode);
         Assert.True(loaded.Profile.AutoBoost);
-        Assert.Equal(AntiThrottle.Cpu(ThermalLimits.IntelCpuDefault), loaded.Profile.CurveFor(FanId.Cpu).Curve);
+        Assert.Equal(AntiThrottle.Shared(ThermalLimits.Default), loaded.Profile.Curve);
     }
 
     [Fact]
@@ -98,7 +147,6 @@ public sealed class SettingsTests : IDisposable
         Assert.Equal(new ManualFanSetting(40), loaded.Profile.ManualFor(FanId.Cpu));
         Assert.Equal(new ManualFanSetting(20, UseCurve: true), loaded.Profile.ManualFor(FanId.Gpu));
         Assert.Equal(new ManualFanSetting(), loaded.Profile.ManualFor(FanId.Gpu2));
-        Assert.Equal(AntiThrottle.Gpu(ThermalLimits.GpuDefault), loaded.Profile.CurveFor(FanId.Gpu2).Curve);
 
         store.Save(loaded with
         {
@@ -180,6 +228,7 @@ public sealed class ReleasedSettingsTests : IDisposable
     private static readonly string[] Dropped =
     [
         "Overrides.CoolBoost", "Overrides.GpuModeSwitch", // overrides only settings.json could set, removed
+        "Profile.Curves", // a curve per fan: settings version 4 keeps the one for all fans (Profile.Curve)
     ];
 
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "OpenSense.Tests", Guid.NewGuid().ToString("N"));
@@ -205,7 +254,7 @@ public sealed class ReleasedSettingsTests : IDisposable
         Assert.False(File.Exists(path + ".bad"), "The file was taken for a corrupt one.");
         var now = Values(JsonSerializer.SerializeToNode(loaded, loaded.GetType(), SettingsJson.Options));
         var lost = new List<string>();
-        foreach (var (at, value) in Values(JsonNode.Parse(File.ReadAllText(path))).Where(v => v.Key != "Version" && !Dropped.Contains(v.Key))) // Upgrade raises Version
+        foreach (var (at, value) in Values(JsonNode.Parse(File.ReadAllText(path))).Where(v => v.Key != "Version" && !Dropped.Any(d => v.Key == d || v.Key.StartsWith(d + ".", StringComparison.Ordinal)))) // Upgrade raises Version
         {
             var place = Moved.Where(m => m.Release == release && at.StartsWith(m.Then + ".", StringComparison.Ordinal))
                 .Select(m => m.Now + at[m.Then.Length..]).FirstOrDefault() ?? at;

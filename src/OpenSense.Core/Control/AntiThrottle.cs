@@ -23,6 +23,14 @@ public static class AntiThrottle
     /// </summary>
     public static FanCurve Gpu(int limit) => FanCurve.From((limit - 6, 0), (limit, 100));
 
+    /// <summary>
+    /// Custom mode's default curve, the one all its fans share: it follows the higher of the CPU's and the GPU's temperature, and
+    /// starts and reaches full speed where the earlier of the two chips' curves does, so it is never under either of them.
+    /// </summary>
+    public static FanCurve Shared(ThermalLimits limits) => FanCurve.From(
+        (Math.Min(limits.Cpu - 12, limits.Gpu - 6), 0),
+        (Math.Min(limits.Cpu - 6, limits.Gpu), 100));
+
     /// <summary>The curve of a fan that cools <paramref name="chip"/>.</summary>
     public static FanCurve For(FanChip chip, ThermalLimits limits) => chip == FanChip.Gpu ? Gpu(limits.Gpu) : Cpu(limits.Cpu);
 }

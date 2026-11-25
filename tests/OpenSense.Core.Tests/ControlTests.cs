@@ -41,27 +41,48 @@ public class CurveTests
     }
 
     [Fact]
-    public void Follower_rises_at_once_and_falls_one_reading_later()
+    public void Follower_rises_at_once_and_falls_only_once_the_temperature_is_well_under()
     {
         var curve = FanCurve.From((40, 0), (80, 80)); // 2 % per °C
         var f = new CurveFollower();
 
         Assert.Equal(70, f.Update(75, curve));
-        Assert.Equal(70, f.Update(69, curve)); // a drop alone holds 75's boost
-        Assert.Equal(58, f.Update(68, curve)); // the next reading confirms it: 69's boost
-        Assert.Equal(56, f.Update(68, curve));
-        Assert.Equal(70, f.Update(75, curve)); // rising: at once
+        Assert.Equal(70, f.Update(73.5, curve)); // less than 2 °C under: holds 75's boost
+        Assert.Equal(68, f.Update(72, curve)); // more: 2 °C above the temperature, 74's boost
+        Assert.Equal(68, f.Update(73, curve));
+        Assert.Equal(80, f.Update(80, curve)); // rising: at once
     }
 
     [Fact]
-    public void Follower_holds_through_a_wobble_and_ignores_tiny_changes()
+    public void Follower_holds_through_a_wobble()
     {
         var curve = FanCurve.From((40, 0), (80, 80));
         var f = new CurveFollower();
 
         foreach (var temperature in new[] { 60.0, 58, 60, 58, 60 })
             Assert.Equal(40, f.Update(temperature, curve));
-        Assert.Equal(40, f.Update(60.4, curve)); // 41 %: under the 2 % step
+        Assert.Equal(38, f.Update(57, curve)); // 3 °C under: 59's boost
+    }
+
+    [Fact]
+    public void Follower_is_never_under_the_curve_at_the_real_temperature()
+    {
+        var curve = FanCurve.From((50, 20), (70, 50), (85, 100));
+        var f = new CurveFollower();
+
+        foreach (var temperature in new[] { 60.0, 72, 71, 69.5, 64, 63.9, 55, 52, 70, 85, 90, 83, 40 })
+            Assert.True(f.Update(temperature, curve) >= curve.Evaluate(temperature), $"{temperature} °C");
+    }
+
+    [Fact]
+    public void A_wobble_over_a_step_of_the_fans_does_not_move_them_between_steps()
+    {
+        var curve = FanCurve.From((40, 0), (80, 80)); // 2 % per °C: 62.5 °C is halfway between the steps of 40 and 50 %
+        var f = new CurveFollower();
+
+        var speeds = new[] { 62.0, 63, 62, 63, 62, 63, 62 }.Select(t => AcerProtocol.NearestFanSpeed(f.Update(t, curve))).ToList();
+
+        Assert.Equal(1, speeds.Zip(speeds.Skip(1)).Count(pair => pair.First != pair.Second));
     }
 }
 
@@ -206,24 +227,20 @@ public class FanControlServiceTests
     }
 
     [Fact]
-    public void Custom_curves_follow_temperature()
+    public void The_custom_curve_follows_the_hotter_chips_temperature_for_every_fan()
     {
         var profile = new ControlProfile
         {
             Mode = FanControlMode.Custom,
             Manual = new Dictionary<FanId, ManualFanSetting> { [FanId.Cpu] = new(UseCurve: true), [FanId.Gpu] = new(UseCurve: true) },
-            Curves = new Dictionary<FanId, CurveFanSetting>
-            {
-                [FanId.Cpu] = new(FanCurve.From((40, 0), (80, 80))),
-                [FanId.Gpu] = new(FanCurve.From((40, 0), (80, 80))),
-            },
+            Curve = FanCurve.From((40, 0), (80, 80)),
         };
         var (service, fw, _) = Create(profile);
         fw.CpuTemp = 60;
         fw.GpuTemp = 50;
         service.Tick();
         Assert.Equal(40, fw.Speed[1]);
-        Assert.Equal(20, fw.Speed[4]);
+        Assert.Equal(40, fw.Speed[4]);
     }
 
     [Fact]
@@ -251,7 +268,7 @@ public class FanControlServiceTests
         {
             Mode = FanControlMode.Custom,
             Manual = new Dictionary<FanId, ManualFanSetting> { [FanId.Cpu] = new(UseCurve: true), [FanId.Gpu] = new(0) },
-            Curves = new Dictionary<FanId, CurveFanSetting> { [FanId.Cpu] = new(FanCurve.From((40, 0), (80, 80))) },
+            Curve = FanCurve.From((40, 0), (80, 80)),
         };
         var (service, fw, _) = Create(profile);
         fw.CpuTemp = 52; // 24 % on the curve
@@ -340,19 +357,21 @@ public class FanControlServiceTests
     }
 
     [Fact]
-    public void A_sleeping_gpu_gets_no_boost()
+    public void A_sleeping_gpu_leaves_the_curve_to_the_cpus_temperature()
     {
         var profile = new ControlProfile
         {
             Mode = FanControlMode.Custom,
-            Manual = new Dictionary<FanId, ManualFanSetting> { [FanId.Cpu] = new(0), [FanId.Gpu] = new(UseCurve: true) },
-            Curves = new Dictionary<FanId, CurveFanSetting> { [FanId.Gpu] = new(FanCurve.From((20, 60), (100, 60))) },
+            Manual = new Dictionary<FanId, ManualFanSetting> { [FanId.Cpu] = new(UseCurve: true), [FanId.Gpu] = new(UseCurve: true) },
+            Curve = FanCurve.From((40, 0), (80, 80)),
         };
         var (service, fw, _) = Create(profile);
+        fw.CpuTemp = 70;
         fw.GpuTemp = 0; // the firmware's answer while the discrete GPU is powered down
         service.Tick();
-        Assert.Equal(FanBehavior.Auto, fw.Behavior[3]);
         Assert.True(service.Latest!.GpuAsleep);
+        Assert.Equal(60, fw.Speed[1]);
+        Assert.Equal(60, fw.Speed[4]); // the GPU fan shares the CPU's heatsink: no reason to leave it still
     }
 
     [Fact]
@@ -390,19 +409,19 @@ public class FanControlServiceTests
     }
 
     [Fact]
-    public void Without_a_firmware_gpu_sensor_the_gpu_fan_follows_the_drivers_reading()
+    public void Without_a_firmware_gpu_sensor_the_drivers_reading_counts_when_the_gpu_is_the_hotter_chip()
     {
-        var gpu = new FakeGpuSensor { Temperature = 50 };
+        var gpu = new FakeGpuSensor { Temperature = 70 };
         var sensors = new DirectSensors(null, gpu, new FakeGpuPowerState { On = true }, SensorStatus.NotUsed, gpu.Status);
         var (service, fw) = CreateWithoutFirmwareGpuTemperature(BothFansOnCurves, sensors);
         fw.CpuTemp = 60;
 
         service.Tick();
 
-        Assert.Equal(50d, service.Latest!.GpuTemperature);
+        Assert.Equal(70d, service.Latest!.GpuTemperature);
         Assert.Equal(TemperatureOrigin.GpuDriver, service.Latest.GpuTemperatureOrigin);
-        Assert.Equal(40, fw.Speed[1]);
-        Assert.Equal(20, fw.Speed[4]);
+        Assert.Equal(60, fw.Speed[1]);
+        Assert.Equal(60, fw.Speed[4]);
     }
 
     [Fact]
@@ -425,11 +444,7 @@ public class FanControlServiceTests
     {
         Mode = FanControlMode.Custom,
         Manual = new Dictionary<FanId, ManualFanSetting> { [FanId.Cpu] = new(UseCurve: true), [FanId.Gpu] = new(UseCurve: true) },
-        Curves = new Dictionary<FanId, CurveFanSetting>
-        {
-            [FanId.Cpu] = new(FanCurve.From((40, 0), (80, 80))), // 2 % per °C
-            [FanId.Gpu] = new(FanCurve.From((40, 0), (80, 80))),
-        },
+        Curve = FanCurve.From((40, 0), (80, 80)), // 2 % per °C
     };
 
     private static (FanControlService Service, FakeFirmware Firmware) CreateWithoutFirmwareGpuTemperature(ControlProfile profile, DirectSensors sensors)
@@ -464,7 +479,7 @@ public class FanControlServiceTests
         {
             Mode = FanControlMode.Custom,
             Manual = new Dictionary<FanId, ManualFanSetting> { [FanId.Cpu] = new(UseCurve: true), [FanId.Gpu] = new(0) },
-            Curves = new Dictionary<FanId, CurveFanSetting> { [FanId.Cpu] = new(curve) },
+            Curve = curve,
         };
         var (service, fw, _) = Create(profile, clock: () => now);
 

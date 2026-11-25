@@ -12,47 +12,28 @@ using OpenSense.Core.Monitoring;
 
 namespace OpenSense.App.ViewModels;
 
-/// <summary>One fan in Custom mode: a fixed boost, or a boost that follows <see cref="Curve"/>.</summary>
-public sealed partial class ManualFanViewModel(FanId id, string name, CurveFanViewModel curve) : ObservableObject
+/// <summary>One fan in Custom mode, with the fixed boost it gets where the fans don't follow the curve.</summary>
+public sealed partial class ManualFanViewModel(FanId id, string name) : ObservableObject
 {
     public FanId Id { get; } = id;
 
     public string Name { get; } = name;
 
-    public CurveFanViewModel Curve { get; } = curve;
-
     /// <summary>The fixed speed's label: added speed, or the fan's own where Custom speeds are (<see cref="DeviceCapabilities.FixedFanSpeeds"/>).</summary>
     public string PercentHeader { get; init; } = "";
-
-    /// <summary>0 = fixed boost, 1 = curve (the order of the segmented control).</summary>
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(UseCurve), nameof(IsFixed))]
-    public partial int KindIndex { get; set; }
-
-    public bool UseCurve => KindIndex == 1;
-
-    public bool IsFixed => !UseCurve;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(PercentText))]
     public partial double Percent { get; set; } = 30;
 
     public string PercentText => Units.Percent(Percent);
-
-    public ManualFanSetting ToSetting() => new((int)Math.Round(Percent), UseCurve);
 }
 
-/// <summary>A fan's curve; it follows the fan's own chip (CPU fan: CPU, GPU fans: GPU).</summary>
-public sealed partial class CurveFanViewModel(FanId id, FanChip chip, string name) : ObservableObject
+/// <summary>Custom mode's one curve, which every fan follows at the higher of the CPU's and the GPU's temperature.</summary>
+public sealed partial class CurveFanViewModel : ObservableObject
 {
-    public FanId Id { get; } = id;
-
-    public FanChip Chip { get; } = chip;
-
-    public string Name { get; } = name;
-
     [ObservableProperty]
-    public partial FanCurve Curve { get; set; } = AntiThrottle.For(chip, ThermalLimits.Default);
+    public partial FanCurve Curve { get; set; } = AntiThrottle.Shared(ThermalLimits.Default);
 
     /// <summary>Where the chips start slowing down, as the engine last said: the Default preset goes by them.</summary>
     public ThermalLimits Limits { get; set; } = ThermalLimits.Default;
@@ -61,18 +42,16 @@ public sealed partial class CurveFanViewModel(FanId id, FanChip chip, string nam
     [ObservableProperty]
     public partial double LiveTemperature { get; set; } = double.NaN;
 
-    /// <summary>Boost the fan is getting (%); NaN when unknown.</summary>
+    /// <summary>Boost the fans are getting (%); NaN when unknown.</summary>
     [ObservableProperty]
     public partial double LivePercent { get; set; } = double.NaN;
 
     [ObservableProperty]
     public partial bool UseFahrenheit { get; set; }
 
-    /// <summary>Auto's curve for this fan's chip.</summary>
+    /// <summary>The standard curve for the chips' limits.</summary>
     [RelayCommand]
-    private void ApplyDefault() => Curve = AntiThrottle.For(Chip, Limits);
-
-    public CurveFanSetting ToSetting() => new(Curve);
+    private void ApplyDefault() => Curve = AntiThrottle.Shared(Limits);
 }
 
 public sealed record OperatingModeOption(OperatingMode Mode, string Name, string Description);
@@ -115,14 +94,31 @@ public sealed partial class FanControlViewModel : ObservableObject
         _pushTimer.IsRepeating = false;
         _pushTimer.Tick += (_, _) => Push();
         monitor.PropertyChanged += OnMonitorChanged;
+        Curve.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(CurveFanViewModel.Curve))
+                SchedulePush();
+        };
     }
 
     /// <summary>In <see cref="FanControlMode"/> order.</summary>
     public static IReadOnlyList<string> ModeNames { get; } =
         [Names.FanMode(FanControlMode.Auto), Names.FanMode(FanControlMode.Max), Names.FanMode(FanControlMode.Custom)];
 
-    /// <summary>Custom mode, one per fan.</summary>
+    /// <summary>Custom mode's fixed boosts, one per fan.</summary>
     public ObservableCollection<ManualFanViewModel> ManualFans { get; } = [];
+
+    /// <summary>Custom mode's curve, the same for every fan.</summary>
+    public CurveFanViewModel Curve { get; } = new();
+
+    /// <summary>0 = a fixed boost per fan, 1 = every fan follows <see cref="Curve"/> (the order of the segmented control).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(UseCurve), nameof(IsFixed))]
+    public partial int KindIndex { get; set; }
+
+    public bool UseCurve => KindIndex == 1;
+
+    public bool IsFixed => !UseCurve;
 
     public ObservableCollection<OperatingModeOption> OperatingModes { get; } = [];
 
@@ -252,21 +248,24 @@ public sealed partial class FanControlViewModel : ObservableObject
         var percentHeader = Strings.Get(caps.FixedFanSpeeds ? "Fans_SpeedFixed" : "Fans_Boost/Header");
         foreach (var fan in caps.ControllableFans)
         {
-            var manual = profile.ManualFor(fan.Id);
-            var name = Names.Fan(fan.Id, caps.Fans);
-            var custom = new ManualFanViewModel(fan.Id, name, CreateCurve(fan, name, profile.CurveFor(fan.Id)))
+            var custom = new ManualFanViewModel(fan.Id, Names.Fan(fan.Id, caps.Fans))
             {
-                KindIndex = manual.UseCurve ? 1 : 0,
-                Percent = manual.Percent,
+                Percent = profile.ManualFor(fan.Id).Percent,
                 PercentHeader = percentHeader,
             };
             custom.PropertyChanged += (_, e) =>
             {
-                if (e.PropertyName is nameof(ManualFanViewModel.KindIndex) or nameof(ManualFanViewModel.Percent))
+                if (e.PropertyName == nameof(ManualFanViewModel.Percent))
                     SchedulePush();
             };
             ManualFans.Add(custom);
         }
+
+        // One curve for all: a profile where only some fans followed one counts as following it.
+        KindIndex = caps.ControllableFans.Any(f => profile.ManualFor(f.Id).UseCurve) ? 1 : 0;
+        Curve.Curve = profile.Curve;
+        Curve.Limits = _monitor.Latest?.Limits ?? ThermalLimits.Default;
+        Curve.UseFahrenheit = _monitor.UseFahrenheit;
 
         CoolBoostAvailable = caps.CoolBoost;
         CoolBoost = profile.CoolBoost ?? _session.Firmware?.CoolBoost ?? false;
@@ -316,24 +315,6 @@ public sealed partial class FanControlViewModel : ObservableObject
         OnPropertyChanged(nameof(OperatingModes)); // the tray menu lists them too
     }
 
-    private CurveFanViewModel CreateCurve(FanChannel fan, string name, CurveFanSetting setting)
-    {
-        var curve = new CurveFanViewModel(fan.Id, fan.Chip, name)
-        {
-            Curve = setting.Curve,
-            Limits = _monitor.Latest?.Limits ?? ThermalLimits.Default,
-            UseFahrenheit = _monitor.UseFahrenheit,
-        };
-        curve.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName == nameof(CurveFanViewModel.Curve))
-                SchedulePush();
-        };
-        return curve;
-    }
-
-    private IEnumerable<CurveFanViewModel> AllCurves => ManualFans.Select(m => m.Curve);
-
     private int IndexOf(OperatingMode mode)
     {
         for (var i = 0; i < OperatingModes.Count; i++)
@@ -349,6 +330,8 @@ public sealed partial class FanControlViewModel : ObservableObject
         if (value >= 0) // selection controls briefly report -1 while initialising
             SchedulePush();
     }
+
+    partial void OnKindIndexChanged(int value) => SchedulePush();
 
     partial void OnAutoBoostEnabledChanged(bool value) => SchedulePush();
 
@@ -414,8 +397,8 @@ public sealed partial class FanControlViewModel : ObservableObject
         {
             Mode = ModeIndex >= 0 ? Mode : current.Mode,
             AutoBoost = AutoBoostEnabled,
-            Manual = ManualFans.ToDictionary(f => f.Id, f => f.ToSetting()),
-            Curves = ManualFans.ToDictionary(f => f.Id, f => f.Curve.ToSetting()),
+            Manual = ManualFans.ToDictionary(f => f.Id, f => new ManualFanSetting((int)Math.Round(f.Percent), UseCurve)),
+            Curve = Curve.Curve,
             CoolBoost = CoolBoostAvailable ? CoolBoost : current.CoolBoost,
             // Only a curve the user picked is written: until then the firmware keeps its own.
             FanTable = _fanTableChosen && FanTableAvailable && FanTableIndex >= 0 ? (FanTable)(FanTableIndex + 1) : current.FanTable,
@@ -440,8 +423,7 @@ public sealed partial class FanControlViewModel : ObservableObject
     {
         if (e.PropertyName == nameof(MonitorViewModel.UseFahrenheit))
         {
-            foreach (var curve in AllCurves)
-                curve.UseFahrenheit = _monitor.UseFahrenheit;
+            Curve.UseFahrenheit = _monitor.UseFahrenheit;
         }
         if (e.PropertyName != nameof(MonitorViewModel.Latest) || _monitor.Latest is not { } t)
             return;
@@ -455,17 +437,11 @@ public sealed partial class FanControlViewModel : ObservableObject
             ListOperatingModes();
         }
 
-        foreach (var curve in AllCurves)
-        {
-            // As the engine does: a sleeping GPU has no temperature; one without a sensor follows the CPU.
-            var temperature = curve.Chip == FanChip.Gpu
-                ? t.GpuTemperature ?? (t.GpuAsleep ? null : t.CpuTemperature)
-                : t.CpuTemperature;
-            curve.LiveTemperature = temperature ?? double.NaN;
-            curve.Limits = t.Limits;
-            curve.LivePercent = t.Fan(curve.Id) is { } fan
-                ? fan.Behavior == FanBehavior.Max ? 100 : fan.BoostPercent ?? 0
-                : double.NaN;
-        }
+        // As the engine does: the higher of the CPU's and the GPU's temperature (a sleeping GPU has none), and the boost the fans get.
+        Curve.LiveTemperature = t.GpuTemperature is { } gpu ? Math.Max(gpu, t.CpuTemperature ?? gpu) : t.CpuTemperature ?? double.NaN;
+        Curve.Limits = t.Limits;
+        var boosts = ManualFans.Select(f => t.Fan(f.Id)).OfType<FanTelemetry>()
+            .Select(f => f.Behavior == FanBehavior.Max ? 100 : f.BoostPercent ?? 0).ToList();
+        Curve.LivePercent = boosts.Count > 0 ? boosts.Max() : double.NaN;
     }
 }

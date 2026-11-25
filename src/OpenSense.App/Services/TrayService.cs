@@ -39,6 +39,7 @@ public sealed class TrayService(MonitorViewModel monitor, FanControlViewModel fa
         _icon.ForceCreate(false);
 
         monitor.PropertyChanged += OnMonitorChanged;
+        widget.VisibilityChanged += SyncMenu; // the widget's own close button doesn't go through the menu
         fans.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName is nameof(FanControlViewModel.ModeIndex) or nameof(FanControlViewModel.OperatingModeIndex)
@@ -143,6 +144,7 @@ public sealed class TrayService(MonitorViewModel monitor, FanControlViewModel fa
 
     public void Dispose()
     {
+        widget.VisibilityChanged -= SyncMenu;
         _icon?.Dispose();
         _icon = null;
     }
